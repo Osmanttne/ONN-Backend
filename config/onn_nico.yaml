@@ -1,0 +1,56 @@
+# ============================================================
+# ONN bench profile — "onn-nico"
+# PLACEHOLDER values marked TODO must be replaced with the real
+# hyperparameters from the onn-nico-parameters file.
+# ============================================================
+
+laser:
+  port: COM3
+  baudrate: 9600
+  default_power_mw: 10.0      # applied automatically on connect
+  max_power_mw: 30.0          # TODO: software safety cap (head allows 82.5)
+  wavelength_nm: 660
+
+dmd:
+  # Input encoding: each element of the input matrix becomes a
+  # macropixel block on the DMD, centered in the active area.
+  bit_depth: 1
+  invert: false               # true -> input 1 = mirror OFF
+  macropixel: auto            # auto = largest block that fits, or an integer px
+  picture_time_us: 100000     # onboard frame period when running sequences
+
+slm:
+  lut_file: "C:/Program Files/Meadowlark Optics/Blink 1920 HDMI/LUT Files/slm5602_estimated_660nm.lut"   # TODO confirm
+  wfc_file: "C:/Program Files/Meadowlark Optics/Blink 1920 HDMI/WFC Files/black.bmp"                      # .bmp confirmed
+  resolution: [1920, 1152]
+  bit_depth: 8
+  max_frame_rate_hz: 31
+  frame_rate_hz: 31
+  coverglass:
+    threshold_v: 6.171        # TODO: confirm target voltage — LOCKED once reached
+    poll_s: 1.0
+  temp_warn_c: 40.0           # TODO: confirm safe operating limit
+
+camera:
+  # Preset pushed in one shot on connect (values from current SpinView state;
+  # replace with onn-nico optimal values).
+  acquisition_mode: Continuous     # Continuous | SingleFrame | MultiFrame
+  acquisition_frame_rate_hz: 43.01
+  exposure_auto: "Off"             # backend fixes exposure for reproducible Y
+  exposure_mode: Timed
+  exposure_time_us: 11953.12
+  gain_auto: "Off"
+  gain_db: 0.0
+  gamma: 1.25
+  black_level_pct: 5.86
+  pixel_format: Mono8
+  device_link_throughput_limit: 381152000
+
+onn:
+  # Forward pass  X (T, h, w)  ->  Y (T, gh, gw)
+  input_shape: [4, 4]         # TODO: expected (h, w) of each input timestep
+  detector_grid: [4, 4]       # TODO: (gh, gw) pooling grid = prediction matrix size
+  detector_roi: null          # [x, y, w, h] on the sensor; null = full frame
+  settle_s: 0.05              # DMD-update -> capture delay (software-timed v1)
+  frames_per_input: 1         # >1 = average frames per timestep to cut noise
+  normalize_y: true           # scale Y to [0, 1] by detector full scale

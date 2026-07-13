@@ -1,0 +1,129 @@
+"""FLIR Grasshopper3 GS3-U3-89S6M driver via the Spinnaker SDK (PySpin).
+
+Design point from the requirements: the user never hand-tunes nodes —
+apply_preset() pushes the whole known-good parameter set in one call.
+"""
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+
+from .base import Device, DeviceState
+
+log = logging.getLogger("onn.camera")
+
+try:
+    import PySpin
+    _HAS_PYSPIN = True
+except ImportError:  # pragma: no cover
+    _HAS_PYSPIN = False
+
+
+class CameraFLIR(Device):
+    name = "camera"
+
+    def __init__(self, preset: dict | None = None, serial: str | None = None):
+        super().__init__()
+        if not _HAS_PYSPIN:
+            raise ImportError("PySpin (Spinnaker SDK) not installed")
+        self.preset = preset or {}
+        self.serial = serial
+        self._system = None
+        self._cam = None
+        self._acquiring = False
+
+    # -- lifecycle -----------------------------------------------------
+    def connect(self):
+        self._system = PySpin.System.GetInstance()
+        cams = self._system.GetCameras()
+        if cams.GetSize() == 0:
+            cams.Clear()
+            raise RuntimeError("no FLIR cameras found")
+        self._cam = (cams.GetBySerial(self.serial) if self.serial else cams.GetByIndex(0))
+        cams.Clear()
+        self._cam.Init()
+        model = self._cam.TLDevice.DeviceModelName.GetValue()
+        log.info("connected to %s", model)
+        if self.preset:
+            self.apply_preset(self.preset)
+        self.state = DeviceState.READY
+        return self
+
+    def disconnect(self):
+        if self._cam:
+            try:
+                self.stop()
+            finally:
+                self._cam.DeInit()
+                del self._cam
+                self._cam = None
+        if self._system:
+            self._system.ReleaseInstance()
+            self._system = None
+        self.state = DeviceState.DISCONNECTED
+
+    # -- the efficiency feature -------------------------------------------
+    def apply_preset(self, preset: dict):
+        """Push the full parameter set from the profile in one shot."""
+        c = self._cam
+        def enum_set(node, value):
+            getattr(c, node).SetValue(getattr(PySpin, f"{node}_{value}"))
+
+        enum_set("AcquisitionMode", preset.get("acquisition_mode", "Continuous"))
+        enum_set("ExposureAuto", preset.get("exposure_auto", "Off"))
+        if preset.get("exposure_auto", "Off") == "Off":
+            c.ExposureTime.SetValue(float(preset.get("exposure_time_us", 10000)))
+        enum_set("GainAuto", preset.get("gain_auto", "Off"))
+        if preset.get("gain_auto", "Off") == "Off":
+            c.Gain.SetValue(float(preset.get("gain_db", 0.0)))
+        if hasattr(c, "Gamma") and "gamma" in preset:
+            c.GammaEnable.SetValue(True)
+            c.Gamma.SetValue(float(preset["gamma"]))
+        if "black_level_pct" in preset:
+            c.BlackLevel.SetValue(float(preset["black_level_pct"]))
+        if "acquisition_frame_rate_hz" in preset:
+            if hasattr(c, "AcquisitionFrameRateEnable"):
+                c.AcquisitionFrameRateEnable.SetValue(True)
+            c.AcquisitionFrameRate.SetValue(float(preset["acquisition_frame_rate_hz"]))
+        if "device_link_throughput_limit" in preset:
+            c.DeviceLinkThroughputLimit.SetValue(int(preset["device_link_throughput_limit"]))
+        log.info("camera preset applied (%d parameters)", len(preset))
+
+    # -- acquisition ---------------------------------------------------------
+    def start(self):
+        if not self._acquiring:
+            self._cam.BeginAcquisition()
+            self._acquiring = True
+            self.state = DeviceState.RUNNING
+
+    def stop(self):
+        if self._acquiring:
+            self._cam.EndAcquisition()
+            self._acquiring = False
+            self.state = DeviceState.READY
+
+    def grab(self, timeout_ms: int = 2000) -> np.ndarray:
+        """Return one frame as a numpy array (starts acquisition if needed)."""
+        self._require_ready()
+        self.start()
+        img = self._cam.GetNextImage(timeout_ms)
+        try:
+            if img.IsIncomplete():
+                raise RuntimeError(f"incomplete image: {img.GetImageStatus()}")
+            arr = img.GetNDArray().copy()
+        finally:
+            img.Release()
+        return arr
+
+    def grab_mean(self, n: int = 1, timeout_ms: int = 2000) -> np.ndarray:
+        """Average n frames — the noise-reduction knob for the forward pass."""
+        frames = [self.grab(timeout_ms).astype(np.float64) for _ in range(max(1, n))]
+        return np.mean(frames, axis=0)
+
+    def status(self) -> dict:
+        s = {"state": self.state.value, "acquiring": self._acquiring}
+        if self._cam:
+            s["model"] = self._cam.TLDevice.DeviceModelName.GetValue()
+            s["fps"] = float(self._cam.AcquisitionFrameRate.GetValue())
+        return s
