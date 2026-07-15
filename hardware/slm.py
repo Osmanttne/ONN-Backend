@@ -96,8 +96,32 @@ class SlmMeadowlark(Device):
             log.warning("SLM temperature %.2f C exceeds warn limit %.1f C", t, self.temp_warn_c)
         return t
 
+    def _blink_lib(self):
+        """Locate the Blink DLL handle across slmsuite versions (or None)."""
+        for attr in ("slm_lib", "_slm_lib", "sdk", "_sdk", "lib"):
+            h = getattr(self._slm, attr, None)
+            if h is not None:
+                return h
+        try:
+            import slmsuite.hardware.slms.meadowlark as _ml
+            return getattr(_ml, "slm_lib", None)
+        except ImportError:
+            return None
+
     def get_coverglass_v(self) -> float:
-        return float(self._slm.slm_lib.Get_cover_voltage())  # Blink SDK call
+        """Coverglass voltage, or NaN if this SDK build doesn't expose it.
+
+        The Blink controller auto-adjusts the voltage in hardware; when the
+        SDK offers no getter we simply can't observe it from Python.
+        """
+        if not getattr(self, "enable_native_probes", False):
+            return float("nan")   # controller-managed; native call opt-in only
+        lib = self._blink_lib()
+        if lib is not None:
+            for fn in ("Get_cover_voltage", "GetCoverVoltage"):
+                if hasattr(lib, fn):
+                    return float(getattr(lib, fn)())
+        return float("nan")
 
     def set_coverglass_v(self, volts: float):
         """Blocked permanently once the threshold has been reached."""
@@ -106,11 +130,19 @@ class SlmMeadowlark(Device):
             raise SafetyLockError(
                 f"refusing to set coverglass to {volts} V >= threshold "
                 f"{self.coverglass_threshold_v} V")
-        self._slm.slm_lib.Set_cover_voltage(float(volts))
+        lib = self._blink_lib()
+        if lib is None or not hasattr(lib, "Set_cover_voltage"):
+            raise RuntimeError("this Blink SDK build does not expose coverglass "
+                               "control from Python; use the Blink software")
+        lib.Set_cover_voltage(float(volts))
 
     def poll_coverglass(self) -> dict:
         """Call periodically: latches the lock the moment threshold is reached."""
+        import math
         v = self.get_coverglass_v()
+        if math.isnan(v):
+            return {"voltage_v": None, "locked": self.coverglass_locked,
+                    "note": "managed by controller; not readable via this SDK"}
         if not self.coverglass_locked and v >= self.coverglass_threshold_v:
             self.coverglass_locked = True
             log.info("coverglass reached %.3f V — LOCKED (threshold %.3f V)",
@@ -124,9 +156,20 @@ class SlmMeadowlark(Device):
                 "damage the SLM and is not permitted")
 
     def status(self) -> dict:
+        """Safe by default: native temperature/coverglass probes are opt-in.
+
+        Blink SDK functions called with a mismatched signature don't raise —
+        they access-violate and kill the whole process. Until the exact
+        signatures for this SDK build are verified, status() reports state
+        without touching them. Set enable_native_probes=True to opt in.
+        """
         s = {"state": self.state.value, "lut": self.lut_file.name,
-             "wfc": self.wfc_file.name, "coverglass_locked": self.coverglass_locked}
-        if self._slm and self.state is not DeviceState.DISCONNECTED:
-            s["temperature_c"] = self.get_temperature_c()
-            s.update(self.poll_coverglass())
+             "wfc": self.wfc_file.name,
+             "coverglass": "managed by Blink controller (auto-adjust + hold)"}
+        if getattr(self, "enable_native_probes", False) and self._slm                 and self.state is not DeviceState.DISCONNECTED:
+            try:
+                s["temperature_c"] = self.get_temperature_c()
+                s.update(self.poll_coverglass())
+            except Exception as e:
+                s["probe_error"] = str(e)
         return s

@@ -13,7 +13,21 @@ from .base import Device, DeviceState
 
 log = logging.getLogger("onn.dmd")
 
+def _register_alp_dll_dirs():
+    """Py3.8+ DLL isolation: register ALP folders so alp4395.dll finds siblings."""
+    import os, glob
+    for pat in (r"C:\Program Files\ALP-4.3*\**", r"C:\Program Files\ViALUX*\**",
+                r"C:\Program Files (x86)\ALP-4.3*\**"):
+        for d in glob.glob(pat, recursive=True):
+            if os.path.isdir(d) and glob.glob(os.path.join(d, "*.dll")):
+                try:
+                    os.add_dll_directory(d)
+                except OSError:
+                    pass
+
+
 try:
+    _register_alp_dll_dirs()
     from ALP4 import ALP4, ALP_DEFAULT  # pip install ALP4lib (needs ViALUX DLL)
     _HAS_ALP = True
 except ImportError:  # pragma: no cover
@@ -65,9 +79,49 @@ class DmdViALUX(Device):
         self.shape: tuple[int, int] | None = None
 
     # -- lifecycle -----------------------------------------------------
+    @staticmethod
+    def _find_lib_dir():
+        """Locate the folder containing alp*.dll (standard or high-speed install)."""
+        import glob, os
+        for pat in (r"C:\Program Files\ALP-4.3*\**\alp*.dll",
+                    r"C:\Program Files\ViALUX*\**\alp*.dll"):
+            hits = [h for h in glob.glob(pat, recursive=True) if "x64" in h]
+            if hits:
+                hits.sort(key=lambda h: "Samples" in h)
+                # ALP4lib appends x64/<dll> to libDir, so return the x64 dir's parent
+                return os.path.dirname(os.path.dirname(hits[0]))
+        return None
+
     def connect(self):
-        self._dev = ALP4(version=self._alp_version)
-        self._dev.Initialize()
+        # re-entrant: if this kernel already holds an allocation, release it
+        if self._dev is not None:
+            try:
+                self.free()
+                self._dev.Free()
+            except Exception:
+                pass
+            self._dev = None
+
+        import time as _t
+        lib_dir = self._find_lib_dir()
+        last_err = None
+        for attempt in (1, 2):
+            try:
+                self._dev = ALP4(version=self._alp_version, libDir=lib_dir) \
+                    if lib_dir else ALP4(version=self._alp_version)
+                self._dev.Initialize()
+                break
+            except Exception as e:
+                last_err = e
+                self._dev = None
+                if attempt == 1:
+                    log.warning("DMD init failed (%s); retrying in 3 s...", e)
+                    _t.sleep(3.0)
+        if self._dev is None:
+            raise RuntimeError(
+                f"DMD did not initialize after 2 attempts: {last_err}. "
+                "If check_bench.py passes but this fails, another kernel/process "
+                "holds the device — shut down ALL kernels and retry.")
         self.shape = (self._dev.nSizeY, self._dev.nSizeX)
         log.info("DMD %s connected, %sx%s mirrors",
                  self._dev.DevInquire(2001) if hasattr(self._dev, "DevInquire") else "",

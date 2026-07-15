@@ -5,7 +5,7 @@
 # ============================================================
 
 laser:
-  port: COM3
+  port: COM3              # "Coherent OBIS Device (COM3)" — verified by check_bench
   baudrate: 9600
   default_power_mw: 10.0      # applied automatically on connect
   max_power_mw: 30.0          # TODO: software safety cap (head allows 82.5)
@@ -20,7 +20,7 @@ dmd:
   picture_time_us: 100000     # onboard frame period when running sequences
 
 slm:
-  lut_file: "C:/Program Files/Meadowlark Optics/Blink 1920 HDMI/LUT Files/slm5602_estimated_660nm.lut"   # TODO confirm
+  lut_file: "C:/Program Files/Meadowlark Optics/Blink 1920 HDMI/LUT Files/slm5602_estimated_660nm_from_slm5838_635nm_HDMI.LUT"
   wfc_file: "C:/Program Files/Meadowlark Optics/Blink 1920 HDMI/WFC Files/black.bmp"                      # .bmp confirmed
   resolution: [1920, 1152]
   bit_depth: 8

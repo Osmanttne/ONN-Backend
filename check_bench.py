@@ -72,16 +72,47 @@ def check_laser(port_cfg: str = "COM3"):
 
 
 # ------------------------------------------------------------------- dmd
+def _register_alp_dll_dirs():
+    """Python 3.8+ no longer searches a DLL's own folder for its dependencies.
+    Register every plausible ALP directory so alp4395.dll can find its siblings."""
+    import os, glob
+    added = []
+    for pat in (r"C:\Program Files\ALP-4.3*\**", r"C:\Program Files\ViALUX*\**",
+                r"C:\Program Files (x86)\ALP-4.3*\**"):
+        for d in glob.glob(pat, recursive=True):
+            if os.path.isdir(d) and glob.glob(os.path.join(d, "*.dll")):
+                try:
+                    os.add_dll_directory(d)
+                    added.append(d)
+                except OSError:
+                    pass
+    if added:
+        print("       registered DLL dirs: " + "; ".join(added))
+
+
 def check_dmd():
     print("\n--- DMD (ViALUX, USB + ALP API) ---")
+    _register_alp_dll_dirs()
     try:
         from ALP4 import ALP4
     except ImportError:
         report("dmd", False, "ALP4lib not installed or ALP DLL not found",
                "pip install ALP4lib; DLL ships with the ViALUX/EasyProj install")
         return
+    import glob, os
+    dll_hits = [d for pat in (r"C:\Program Files\ALP-4.3*\**\alp*.dll",
+                              r"C:\Program Files\ViALUX*\**\alp*.dll")
+                for d in glob.glob(pat, recursive=True) if "x64" in d]
+    if not dll_hits:
+        report("dmd", False, "no alp*.dll found under C:\\Program Files",
+               "reinstall the ViALUX ALP-4.3 API package")
+        return
+    dll_hits.sort(key=lambda h: "Samples" in h)   # prefer the real API copy
+    dll = dll_hits[0]
+    lib_dir = os.path.dirname(os.path.dirname(dll))  # ALP4lib appends x64/<dll> itself
+    print(f"       using ALP DLL: {dll} (libDir={lib_dir})")
     try:
-        dev = ALP4(version="4.3")
+        dev = ALP4(version="4.3", libDir=lib_dir)
         dev.Initialize()
         report("dmd", True, f"initialized, {dev.nSizeX}x{dev.nSizeY} mirrors")
         dev.Free()

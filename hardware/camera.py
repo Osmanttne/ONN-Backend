@@ -65,30 +65,57 @@ class CameraFLIR(Device):
 
     # -- the efficiency feature -------------------------------------------
     def apply_preset(self, preset: dict):
-        """Push the full parameter set from the profile in one shot."""
+        """Push the full parameter set from the profile in one shot.
+
+        Every node is set best-effort: GenICam trees differ between camera
+        models/firmware, so an absent or read-only node is skipped and
+        reported rather than aborting the whole preset.
+        """
         c = self._cam
+        applied, skipped = [], []
+
+        def attempt(label, fn):
+            try:
+                fn()
+                applied.append(label)
+            except Exception as e:
+                skipped.append(f"{label} ({type(e).__name__})")
+
         def enum_set(node, value):
             getattr(c, node).SetValue(getattr(PySpin, f"{node}_{value}"))
 
-        enum_set("AcquisitionMode", preset.get("acquisition_mode", "Continuous"))
-        enum_set("ExposureAuto", preset.get("exposure_auto", "Off"))
-        if preset.get("exposure_auto", "Off") == "Off":
-            c.ExposureTime.SetValue(float(preset.get("exposure_time_us", 10000)))
-        enum_set("GainAuto", preset.get("gain_auto", "Off"))
-        if preset.get("gain_auto", "Off") == "Off":
-            c.Gain.SetValue(float(preset.get("gain_db", 0.0)))
-        if hasattr(c, "Gamma") and "gamma" in preset:
-            c.GammaEnable.SetValue(True)
-            c.Gamma.SetValue(float(preset["gamma"]))
+        attempt("AcquisitionMode", lambda: enum_set(
+            "AcquisitionMode", preset.get("acquisition_mode", "Continuous")))
+        attempt("ExposureAuto", lambda: enum_set(
+            "ExposureAuto", preset.get("exposure_auto", "Off")))
+        if preset.get("exposure_auto", "Off") == "Off" and "exposure_time_us" in preset:
+            attempt("ExposureTime", lambda: c.ExposureTime.SetValue(
+                float(preset["exposure_time_us"])))
+        attempt("GainAuto", lambda: enum_set(
+            "GainAuto", preset.get("gain_auto", "Off")))
+        if preset.get("gain_auto", "Off") == "Off" and "gain_db" in preset:
+            attempt("Gain", lambda: c.Gain.SetValue(float(preset["gain_db"])))
+        if "gamma" in preset:
+            attempt("GammaEnable", lambda: c.GammaEnable.SetValue(True))
+            attempt("Gamma", lambda: c.Gamma.SetValue(float(preset["gamma"])))
         if "black_level_pct" in preset:
-            c.BlackLevel.SetValue(float(preset["black_level_pct"]))
+            attempt("BlackLevel", lambda: c.BlackLevel.SetValue(
+                float(preset["black_level_pct"])))
         if "acquisition_frame_rate_hz" in preset:
-            if hasattr(c, "AcquisitionFrameRateEnable"):
-                c.AcquisitionFrameRateEnable.SetValue(True)
-            c.AcquisitionFrameRate.SetValue(float(preset["acquisition_frame_rate_hz"]))
+            attempt("AcqFrameRateEnable",
+                    lambda: c.AcquisitionFrameRateEnable.SetValue(True))
+            attempt("AcquisitionFrameRate", lambda: c.AcquisitionFrameRate.SetValue(
+                float(preset["acquisition_frame_rate_hz"])))
         if "device_link_throughput_limit" in preset:
-            c.DeviceLinkThroughputLimit.SetValue(int(preset["device_link_throughput_limit"]))
-        log.info("camera preset applied (%d parameters)", len(preset))
+            attempt("DeviceLinkThroughputLimit",
+                    lambda: c.DeviceLinkThroughputLimit.SetValue(
+                        int(preset["device_link_throughput_limit"])))
+
+        log.info("camera preset: %d applied, %d skipped%s",
+                 len(applied), len(skipped),
+                 f" [{', '.join(skipped)}]" if skipped else "")
+        if skipped:
+            print(f"        camera preset note — skipped: {', '.join(skipped)}")
 
     # -- acquisition ---------------------------------------------------------
     def start(self):
