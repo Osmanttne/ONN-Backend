@@ -149,8 +149,15 @@ class CameraFLIR(Device):
         return np.mean(frames, axis=0)
 
     def status(self) -> dict:
+        """Best-effort: GenICam nodes can become unreadable mid-acquisition;
+        a status probe must never take the server down over that."""
         s = {"state": self.state.value, "acquiring": self._acquiring}
         if self._cam:
-            s["model"] = self._cam.TLDevice.DeviceModelName.GetValue()
-            s["fps"] = float(self._cam.AcquisitionFrameRate.GetValue())
+            for key, read in (("model", lambda: self._cam.TLDevice.DeviceModelName.GetValue()),
+                              ("fps", lambda: float(self._cam.AcquisitionFrameRate.GetValue())),
+                              ("exposure_us", lambda: float(self._cam.ExposureTime.GetValue()))):
+                try:
+                    s[key] = read()
+                except Exception:
+                    pass
         return s
