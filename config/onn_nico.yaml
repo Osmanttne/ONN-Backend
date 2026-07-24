@@ -38,7 +38,7 @@ camera:
   acquisition_frame_rate_hz: 43.01
   exposure_auto: "Off"             # backend fixes exposure for reproducible Y
   exposure_mode: Timed
-  exposure_time_us: 300
+  exposure_time_us: 726.3   # set by /calibrate 2026-07-24 13:48
   gain_auto: "Off"
   gain_db: 0.0
   gamma: 1.25
@@ -50,7 +50,7 @@ onn:
   # Forward pass  X (T, h, w)  ->  Y (T, gh, gw)
   input_shape: [4, 4]         # TODO: expected (h, w) of each input timestep
   detector_grid: [4, 4]       # TODO: (gh, gw) pooling grid = prediction matrix size
-  detector_roi: [1830, 950, 260, 550]   # ON-order streak only (red region of the ON-OFF diff map); excludes the OFF-light disk at x~2300
+  detector_roi: [0, 0, 4096, 2160]   # set by /calibrate 2026-07-24 13:48
   settle_s: 0.05              # DMD-update -> capture delay (software-timed v1)
   frames_per_input: 1         # >1 = average frames per timestep to cut noise
   normalize_y: true           # scale Y to [0, 1] by detector full scale
