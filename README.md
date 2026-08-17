@@ -18,3 +18,4 @@ jupyter notebook onn_backend.ipynb   # SIM = True at the top
 Install pyserial + ALP4lib + slmsuite + PySpin (vendor SDKs required),
 fill in config TODOs, set SIM = False, run top to bottom.
 # ONN-Backend
+<img width="3947" height="8105" alt="diagram" src="https://github.com/user-attachments/assets/33ae7646-94f3-430d-bf5d-80f9e38c80c2" />
